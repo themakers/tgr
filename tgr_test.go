@@ -174,7 +174,7 @@ func TestTgr(t *testing.T) {
 				d := Tsk("d", 1, nil, b, c)
 				e := Tsk("e", 0, nil, c)
 
-				So(Exec(ctx, d, e), ShouldEqual, ErrPanic{"panic"})
+				So(Exec(ctx, d, e), ShouldResemble, ErrPanic{"panic"})
 			})
 
 		})
@@ -186,7 +186,7 @@ func TestTgr(t *testing.T) {
 					for {
 						select {
 						case <-ctx.Done():
-							return nil
+							return ctx.Err()
 						}
 					}
 					return nil
@@ -204,7 +204,28 @@ func TestTgr(t *testing.T) {
 
 				ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(10*time.Millisecond))
 
-				So(Exec(ctx, a), ShouldNotResemble, context.DeadlineExceeded)
+				So(Exec(ctx, a), ShouldBeNil)
+			})
+
+			Convey("Cancellation", func() {
+				a := T(func(ctx context.Context) error {
+					for {
+						select {
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+					return nil
+				})
+
+				ctx, cancel := context.WithCancel(context.Background())
+
+				go (func() {
+					time.Sleep(10 * time.Millisecond)
+					cancel()
+				})()
+
+				So(Exec(ctx, a), ShouldEqual, context.Canceled)
 			})
 
 		})
@@ -213,8 +234,23 @@ func TestTgr(t *testing.T) {
 
 			Convey("Such cases was running successfully without error", func() {
 				a := Tsk("a", 0, false)
-
 				So(Exec(ctx, a), ShouldResemble, ErrPanic{false})
+			})
+
+		})
+
+		Convey("Examples", func() {
+
+			Convey("Task with arguments", func() {
+				arg := errSim
+
+				a := T((func(arg error) Worker {
+					return func(ctx context.Context) error {
+						return arg
+					}
+				})(arg))
+
+				So(Exec(ctx, a), ShouldEqual, errSim)
 			})
 
 		})

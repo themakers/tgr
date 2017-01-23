@@ -9,6 +9,7 @@ import (
 
 var _ error = new(ErrPanic)
 
+// If some task panics returned error will be of this type
 type ErrPanic struct {
 	rec interface{}
 }
@@ -19,6 +20,7 @@ func (e ErrPanic) Error() string {
 
 type Worker func(ctx context.Context) error
 
+// Creates a task
 func T(w Worker, deps ...*Task) *Task {
 	return &Task{
 		Worker: w,
@@ -26,60 +28,69 @@ func T(w Worker, deps ...*Task) *Task {
 	}
 }
 
-func Exec(ctx context.Context, tasks ...*Task) error {
-	newCtx, cancel := context.WithCancel(ctx)
-	return exec(newCtx, cancel, tasks...)
+// Executes given tasks in maximum concurrent manner walking recursively
+// through the dependency graph.
+// If some task returns an error, whole graph execution is being cancelled
+// returning error received from first failed task.
+func Exec(ctx context.Context, tasks ...*Task) (err error) {
+	newCtx, interrupt := context.WithCancel(ctx)
+	var lock sync.Mutex
+	exec(newCtx, func(e error) {
+		lock.Lock()
+		defer lock.Unlock()
+
+		if e != nil {
+			if err == nil {
+				err = e
+				interrupt()
+			}
+		}
+	}, tasks...)
+	return
 }
 
-func exec(ctx context.Context, cancel context.CancelFunc, tasks ...*Task) error {
+func exec(ctx context.Context, yieldError func(error), tasks ...*Task) bool {
 	ntasks := int32(len(tasks))
 
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-
 	if ntasks == 0 {
-		return nil
+		return true
 	}
 
 	res := make(chan error, len(tasks))
 
 	for _, t := range tasks {
 		go (func(t *Task) {
-			var err error
 			defer (func() {
-				res <- err
 				if 0 == atomic.AddInt32(&ntasks, -1) {
 					close(res)
 				}
 			})()
-			err = exec(ctx, cancel, t.Deps...)
-			if err == nil {
-				err = t.run(ctx)
-			} else {
-				cancel()
+
+			if exec(ctx, yieldError, t.Deps...) {
+				res <- t.run(ctx)
 			}
 		})(t)
 	}
 
 	for {
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
 		case err, ok := <-res:
 			if ok {
 				if err != nil {
-					return err
+					yieldError(err)
+					return false
 				}
 			} else {
-				return nil
+				return true
 			}
+		case <-ctx.Done():
+			yieldError(ctx.Err())
+			return false
 		}
 	}
 }
 
+// Represents single task in graph
 type Task struct {
 	Worker Worker
 	Deps   []*Task
@@ -90,7 +101,7 @@ type Task struct {
 }
 
 func (t *Task) run(ctx context.Context) (err error) {
-	t.lock.Lock()
+	t.lock.Lock() // To prevent worker from being executed multiple times
 	defer t.lock.Unlock()
 
 	defer (func() {
