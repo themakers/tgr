@@ -145,36 +145,67 @@ func TestTgr(t *testing.T) {
 
 		Convey("Errors", func() {
 
-			Convey("Simple", func() {
-				a := Tsk("a", 0, errSim)
+			Convey("Reported", func() {
 
-				So(Exec(ctx, a), ShouldEqual, errSim)
-			})
+				Convey("Simple", func() {
+					a := Tsk("a", 0, errSim)
 
-			Convey("Complex", func() {
-				a := Tsk("a", 0, nil)
-				b := Tsk("b", 0, errSim, a)
-				c := Tsk("c", 1, nil, a)
-				d := Tsk("d", 1, nil, b, c)
-				e := Tsk("e", 0, nil, c)
+					So(Exec(ctx, a), ShouldEqual, errSim)
+				})
 
-				So(Exec(ctx, d, e), ShouldEqual, errSim)
+				Convey("Complex", func() {
+					a := Tsk("a", 0, nil)
+					b := Tsk("b", 0, errSim, a)
+					c := Tsk("c", 1, nil, a)
+					d := Tsk("d", 1, nil, b, c)
+					e := Tsk("e", 0, nil, c)
+
+					So(Exec(ctx, d, e), ShouldEqual, errSim)
+				})
+
 			})
 
 			Convey("Panic", func() {
-				a := Tsk("a", 0, "panic")
 
-				So(Exec(ctx, a), ShouldResemble, ErrPanic{"panic"})
+				Convey("Panic", func() {
+					a := Tsk("a", 0, "panic")
+
+					So(Exec(ctx, a), ShouldResemble, ErrPanic{"panic"})
+					So(Exec(ctx, a).Error(), ShouldResemble, ErrPanic{"panic"}.Error())
+				})
+
+				Convey("Panic Complex", func() {
+					a := Tsk("a", 0, nil)
+					b := Tsk("b", 0, "panic", a)
+					c := Tsk("c", 1, nil, a)
+					d := Tsk("d", 1, nil, b, c)
+					e := Tsk("e", 0, nil, c)
+
+					So(Exec(ctx, d, e), ShouldResemble, ErrPanic{"panic"})
+				})
+
 			})
 
-			Convey("Panic Complex", func() {
-				a := Tsk("a", 0, nil)
-				b := Tsk("b", 0, "panic", a)
-				c := Tsk("c", 1, nil, a)
-				d := Tsk("d", 1, nil, b, c)
-				e := Tsk("e", 0, nil, c)
+			Convey("Cycle", func() {
 
-				So(Exec(ctx, d, e), ShouldResemble, ErrPanic{"panic"})
+				Convey("Cycle 1", func() {
+					var b *Task
+					a := Tsk("a", 0, nil, b)
+					b = Tsk("b", 0, nil, a)
+
+					So(Exec(ctx, a, b), ShouldEqual, errSim)
+				})
+
+				Convey("Cycle 2", func() {
+					var b *Task
+					d := Tsk("b", 0, nil, b)
+					c := Tsk("b", 0, nil, d)
+					b = Tsk("b", 0, nil, c)
+					a := Tsk("a", 0, nil, b)
+
+					So(Exec(ctx, a), ShouldEqual, "wrong value")
+				})
+
 			})
 
 		})
